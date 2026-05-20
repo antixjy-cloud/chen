@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>烟叶重量识别估算系统</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Tobacco Leaf Weight Estimator</p>
+            <h1>烟叶重量识别估算系统</h1>
+          </div>
+          <div class="privacy-pill">图片仅在本地浏览器处理</div>
+        </header>
+
+        <section class="tool-grid">
+          <aside class="control-panel" aria-label="识别控制面板">
+            <div class="panel-section">
+              <h2>1. 上传图片</h2>
+              <label class="upload-zone" for="imageInput">
+                <input id="imageInput" type="file" accept="image/png,image/jpeg,image/jpg" />
+                <span class="upload-icon" aria-hidden="true">+</span>
+                <span class="upload-title">选择烟叶图片</span>
+                <span class="upload-subtitle">支持 JPG、JPEG、PNG</span>
+              </label>
+            </div>
+
+            <div class="panel-section">
+              <h2>2. 设置比例尺</h2>
+              <p class="hint">在图片上点击两次画出参考线，再填写这条线的真实长度。</p>
+              <label>
+                参考线长度
+                <div class="inline-input">
+                  <input id="referenceLength" type="number" min="1" step="0.1" value="29.7" />
+                  <span>cm</span>
+                </div>
+              </label>
+              <div class="quick-actions" aria-label="常用参考长度">
+                <button type="button" data-ref="21">A4 短边 21cm</button>
+                <button type="button" data-ref="29.7">A4 长边 29.7cm</button>
+                <button type="button" data-ref="100">标尺 1m</button>
+              </div>
+            </div>
+
+            <div class="panel-section">
+              <h2>3. 调整估算参数</h2>
+              <label>
+                堆积平均厚度
+                <div class="inline-input">
+                  <input id="thickness" type="number" min="0.1" step="0.1" value="8" />
+                  <span>cm</span>
+                </div>
+              </label>
+              <label>
+                松散堆积密度
+                <div class="inline-input">
+                  <input id="density" type="number" min="10" step="1" value="120" />
+                  <span>kg/m³</span>
+                </div>
+              </label>
+              <label>
+                颜色识别灵敏度
+                <input id="sensitivity" type="range" min="1" max="100" value="58" />
+              </label>
+            </div>
+
+            <div class="button-row">
+              <button id="estimateBtn" class="primary" type="button">开始识别</button>
+              <button id="resetBtn" class="secondary" type="button">重置</button>
+            </div>
+          </aside>
+
+          <section class="image-stage" aria-label="图片预览和识别结果">
+            <div class="canvas-wrap">
+              <canvas id="previewCanvas" width="960" height="640"></canvas>
+              <div id="emptyState" class="empty-state">
+                <strong>上传图片后开始识别</strong>
+                <span>建议正上方拍摄，并放入 A4 纸或标尺作为参考物。</span>
+              </div>
+            </div>
+
+            <div class="result-strip">
+              <div>
+                <span class="metric-label">预测重量</span>
+                <strong id="weightResult">-- kg</strong>
+              </div>
+              <div>
+                <span class="metric-label">烟叶面积</span>
+                <strong id="areaResult">-- m²</strong>
+              </div>
+              <div>
+                <span class="metric-label">可信度</span>
+                <strong id="confidenceResult">--</strong>
+              </div>
+            </div>
+          </section>
+        </section>
+      </section>
+
+      <section class="notes">
+        <article>
+          <h2>使用要点</h2>
+          <p>单张普通照片无法直接知道真实重量。本工具通过烟叶区域面积、参考线比例尺、堆积厚度和密度参数进行估算，适合初步筛查和业务沟通。</p>
+        </article>
+        <article>
+          <h2>提升精度</h2>
+          <p>请固定拍摄角度、距离、光照和背景，并记录“图片 + 实际称重 kg”。积累 200 到 500 张后，可升级为真正的 AI 回归模型。</p>
+        </article>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>
