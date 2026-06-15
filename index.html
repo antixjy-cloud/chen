@@ -1,5 +1,4 @@
 <!DOCTYPE html>
-<html lang="zh-CN"><!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -234,6 +233,18 @@ body {
   transition: border-color .2s;
 }
 .param-input:focus { border-color: var(--green); }
+.leaf-business-ref {
+  background: rgba(0,0,0,.18);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  margin-top: 2px;
+}
+.business-note {
+  font-size: 0.68rem;
+  color: var(--muted);
+  line-height: 1.55;
+}
 input[type=range].slider {
   -webkit-appearance: none; width: 100%; height: 4px;
   background: rgba(109,179,63,.25);
@@ -293,6 +304,57 @@ input[type=range].slider::-webkit-slider-thumb {
 }
 .result-row-key { color: var(--muted); }
 .result-row-val { font-family: 'JetBrains Mono', monospace; color: var(--white); }
+
+.training-card { border-color: rgba(64,160,192,.28); }
+.training-pad {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.training-note {
+  font-size: 0.72rem;
+  color: var(--muted);
+  line-height: 1.55;
+}
+.training-status {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.training-chip {
+  background: rgba(0,0,0,.22);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.training-chip span {
+  display: block;
+  font-size: 0.66rem;
+  color: var(--muted);
+  letter-spacing: .05em;
+}
+.training-chip b {
+  display: block;
+  margin-top: 3px;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--white);
+  font-size: 0.82rem;
+}
+.btn-train {
+  width: 100%;
+  border: none;
+  border-radius: 9px;
+  padding: 10px 12px;
+  background: linear-gradient(135deg, rgba(64,160,192,.38), rgba(109,179,63,.32));
+  color: var(--white);
+  font-weight: 700;
+  cursor: pointer;
+}
+.btn-train:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
 
 /* Confidence */
 .conf-bar-wrap { margin-top: 10px; }
@@ -527,6 +589,25 @@ footer {
               <div class="param-label">颜色识别灵敏度 <span class="param-val" id="sensVal">55</span></div>
               <input type="range" class="slider" id="sensSlider" min="10" max="120" value="55" oninput="document.getElementById('sensVal').textContent=this.value">
             </div>
+            <div class="leaf-business-ref">
+              <div class="param-row" id="curedLeafGradeRow" style="display:none;">
+                <div class="param-label">烤烟叶位参考</div>
+                <select class="param-input" id="curedLeafGrade" onchange="onLeafGradeChange()">
+                  <option value="lower">下部叶 7~8g/片</option>
+                  <option value="middle">中部叶 8~11g/片</option>
+                  <option value="upper">上部叶 10g/片</option>
+                </select>
+              </div>
+              <div class="param-row">
+                <div class="param-label">单叶参考重量 (g/片)</div>
+                <input type="number" class="param-input" id="singleLeafWeightInput" value="120" min="1" step="0.1">
+              </div>
+              <div class="param-row">
+                <div class="param-label">可选：图片中叶片数量</div>
+                <input type="number" class="param-input" id="leafCountInput" min="0" step="1" placeholder="不填则按图像面积估算">
+              </div>
+              <div class="business-note" id="businessRefNote">鲜烟叶默认按 120g/片作为业务参考；不填叶片数量时，系统仍按图像面积、厚度和密度估算。</div>
+            </div>
           </div>
 
           <!-- Seedling params -->
@@ -592,6 +673,23 @@ footer {
         </div>
       </div>
 
+      <!-- Training -->
+      <div class="card training-card">
+        <div class="card-head"><span class="dot dot-warn"></span>训练模式 · 本地校准</div>
+        <div class="training-pad">
+          <div class="training-note">每次识别后填写真实称重，系统会在本浏览器内保存校准系数，后续同类别估算会自动修正。</div>
+          <div class="training-status">
+            <div class="training-chip"><span>当前系数</span><b id="trainFactor">1.000</b></div>
+            <div class="training-chip"><span>样本数量</span><b id="trainCount">0</b></div>
+          </div>
+          <div class="param-row">
+            <div class="param-label">真实重量 (kg)</div>
+            <input type="number" class="param-input" id="actualWeightInput" min="0" step="0.001" placeholder="例如 12.5">
+          </div>
+          <button class="btn-train" id="trainBtn" onclick="submitTrainingSample()" disabled>提交训练样本</button>
+        </div>
+      </div>
+
     </div><!-- /side-panel -->
   </div><!-- /grid-main -->
 
@@ -617,6 +715,7 @@ let rulerPxLen = 0;        // pixels
 let historyItems = [];
 let hasSubstrate = true;
 let traySize = 128;
+let lastPrediction = null;
 
 const MODE_CONFIG = {
   seedling: {
@@ -642,6 +741,7 @@ const MODE_CONFIG = {
     defaultThickness: 8,
     defaultDensity: 180,
     defaultSensitivity: 55,
+    defaultSingleLeafWeight: 120,
     analyzeText: '🔬 识别鲜烟叶',
     cardLabel: '图像 · 点击两点设置比例尺（田间鲜烟叶）',
   },
@@ -655,9 +755,16 @@ const MODE_CONFIG = {
     defaultThickness: 6,
     defaultDensity: 95,
     defaultSensitivity: 48,
+    defaultSingleLeafWeight: 9.5,
     analyzeText: '🍂 识别烤烟',
     cardLabel: '图像 · 点击两点设置比例尺（烤烟）',
   },
+};
+
+const CURED_LEAF_WEIGHT = {
+  lower: { label: '下部叶', min: 7, mid: 7.5, max: 8 },
+  middle: { label: '中部叶', min: 8, mid: 9.5, max: 11 },
+  upper: { label: '上部叶', min: 10, mid: 10, max: 10 },
 };
 
 // Seedling stage weights (g per seedling)
@@ -704,10 +811,26 @@ function setMode(m) {
     document.getElementById('densityInput').value = cfg.defaultDensity;
     document.getElementById('sensSlider').value = cfg.defaultSensitivity;
     document.getElementById('sensVal').textContent = cfg.defaultSensitivity;
+    document.getElementById('singleLeafWeightInput').value = cfg.defaultSingleLeafWeight;
+    document.getElementById('leafCountInput').value = '';
+    document.getElementById('curedLeafGradeRow').style.display = m === 'cured' ? 'flex' : 'none';
+    document.getElementById('businessRefNote').textContent = m === 'fresh'
+      ? '鲜烟叶默认按 120g/片作为业务参考；不填叶片数量时，系统仍按图像面积、厚度和密度估算。'
+      : '烤烟按叶位带出参考单片重量；填写叶片数量时优先按“数量 × 单片重量”估算。';
+    if (m === 'cured') onLeafGradeChange();
   } else {
     document.getElementById('sensSeedSlider').value = cfg.defaultSensitivity;
     document.getElementById('sensSeedVal').textContent = cfg.defaultSensitivity;
   }
+  updateTrainingPanel();
+}
+
+function onLeafGradeChange() {
+  const grade = document.getElementById('curedLeafGrade').value;
+  const ref = CURED_LEAF_WEIGHT[grade] || CURED_LEAF_WEIGHT.middle;
+  document.getElementById('singleLeafWeightInput').value = ref.mid;
+  document.getElementById('businessRefNote').textContent =
+    `烤烟${ref.label}参考 ${ref.min}~${ref.max}g/片，当前按 ${ref.mid}g/片计算；可按实际情况手动修改。`;
 }
 
 function setTraySize(n, el) {
@@ -719,6 +842,58 @@ function setTraySize(n, el) {
 function setSubstrate(v, el) { hasSubstrate = v; }
 
 function onStageChange() {}
+
+function getTrainingKey(m = mode) {
+  return 'tobaccoTraining:' + m;
+}
+
+function getTrainingStats(m = mode) {
+  try {
+    return JSON.parse(localStorage.getItem(getTrainingKey(m))) || { count: 0, factor: 1 };
+  } catch (e) {
+    return { count: 0, factor: 1 };
+  }
+}
+
+function saveTrainingStats(m, stats) {
+  localStorage.setItem(getTrainingKey(m), JSON.stringify(stats));
+}
+
+function applyTrainingFactor(weightKg, m = mode) {
+  const stats = getTrainingStats(m);
+  return weightKg * (stats.factor || 1);
+}
+
+function updateTrainingPanel() {
+  const stats = getTrainingStats(mode);
+  document.getElementById('trainFactor').textContent = (stats.factor || 1).toFixed(3);
+  document.getElementById('trainCount').textContent = stats.count || 0;
+  document.getElementById('trainBtn').disabled = !lastPrediction || lastPrediction.mode !== mode;
+}
+
+function submitTrainingSample() {
+  if (!lastPrediction || lastPrediction.mode !== mode || !lastPrediction.rawWeightKg) {
+    alert('请先完成一次当前类别的识别，再提交训练样本。');
+    return;
+  }
+
+  const actual = parseFloat(document.getElementById('actualWeightInput').value);
+  if (!actual || actual <= 0) {
+    alert('请填写真实重量，单位 kg。');
+    return;
+  }
+
+  const stats = getTrainingStats(mode);
+  const ratio = actual / lastPrediction.rawWeightKg;
+  const nextCount = (stats.count || 0) + 1;
+  const nextFactor = (((stats.factor || 1) * (stats.count || 0)) + ratio) / nextCount;
+  const nextStats = { count: nextCount, factor: nextFactor };
+  saveTrainingStats(mode, nextStats);
+
+  document.getElementById('actualWeightInput').value = '';
+  updateTrainingPanel();
+  alert(`训练样本已保存：${MODE_CONFIG[mode].shortLabel} 校准系数更新为 ${nextFactor.toFixed(3)}`);
+}
 
 /* ═══════════════════════════════════════════════════
    FILE UPLOAD
@@ -883,6 +1058,8 @@ function analyzeLeafCategory() {
   const thickness_cm = parseFloat(document.getElementById('thickInput').value) || 5;
   const density = parseFloat(document.getElementById('densityInput').value) || 180;
   const rulerLenCm = parseFloat(document.getElementById('rulerLen').value) || 21;
+  const singleLeafWeightG = parseFloat(document.getElementById('singleLeafWeightInput').value) || cfg.defaultSingleLeafWeight || 0;
+  const leafCount = parseInt(document.getElementById('leafCountInput').value) || 0;
 
   const { count, total } = countTargetPixels(sensitivity);
   const leafRatio = count / total;
@@ -904,7 +1081,10 @@ function analyzeLeafCategory() {
 
   const thickness_m = thickness_cm / 100;
   const volumeM3 = leafAreaM2 * thickness_m;
-  const weightKg = volumeM3 * density;
+  const imageWeightKg = volumeM3 * density;
+  const countWeightKg = leafCount > 0 && singleLeafWeightG > 0 ? (leafCount * singleLeafWeightG / 1000) : 0;
+  const rawWeightKg = countWeightKg || imageWeightKg;
+  const weightKg = applyTrainingFactor(rawWeightKg, mode);
 
   // Confidence
   const haRuler = rulerPts.length === 2;
@@ -913,15 +1093,24 @@ function analyzeLeafCategory() {
   if (haRuler) conf += 30;
   if (leafPct > 10 && leafPct < 90) conf += 15;
   if (leafPct >= 20 && leafPct <= 75) conf += 10;
+  if (leafCount > 0) conf += 8;
+  if (getTrainingStats(mode).count > 0) conf += 6;
   if (mode === 'fresh' || mode === 'cured') conf += 2;
   conf = Math.min(conf, 92);
 
   const rangeMin = (weightKg * (mode === 'cured' ? 0.70 : 0.65)).toFixed(2);
   const rangeMax = (weightKg * (mode === 'cured' ? 1.30 : 1.40)).toFixed(2);
 
-  showResult(weightKg.toFixed(2), leafAreaM2.toFixed(4)+' m²', volumeM3.toFixed(5)+' m³', conf);
+  const secondMetric = countWeightKg
+    ? `${leafCount}片 × ${singleLeafWeightG}g`
+    : volumeM3.toFixed(5)+' m³';
+  showResult(weightKg.toFixed(2), leafAreaM2.toFixed(4)+' m²', secondMetric, conf);
+  document.querySelector('#resRow2 .result-row-key').textContent = countWeightKg ? '叶片数量参考' : '堆积体积';
   document.getElementById('resultRange').textContent = `范围 ${rangeMin} ~ ${rangeMax} kg`;
   document.getElementById('resMode').textContent = cfg.label;
+  lastPrediction = { mode, rawWeightKg, adjustedWeightKg: weightKg };
+  document.getElementById('trainBtn').disabled = false;
+  updateTrainingPanel();
   saveHistory(weightKg.toFixed(2), mode, conf);
 }
 
@@ -968,14 +1157,24 @@ function analyzeSeedling() {
     weightMax = seedCount * sw.max / 1000;
   }
 
+  const rawWeightMid = weightMid;
+  const factor = getTrainingStats('seedling').factor || 1;
+  weightMin *= factor;
+  weightMid *= factor;
+  weightMax *= factor;
+
   // Confidence
   let conf = 45;
   if (rulerPts.length === 2) conf += 20;
   if (tray > 0) conf += 20;
+  if (getTrainingStats('seedling').count > 0) conf += 6;
   conf = Math.min(conf, 88);
 
   showResult(weightMid.toFixed(3), (seedAreaCm2/10000).toFixed(4)+' m²', tray>0?tray+'孔 x '+seedCount+'苗':seedCount+'苗(估算)', conf, true);
   document.getElementById('resultRange').textContent = `范围 ${weightMin.toFixed(3)} ~ ${weightMax.toFixed(3)} kg`;
+  lastPrediction = { mode: 'seedling', rawWeightKg: rawWeightMid, adjustedWeightKg: weightMid };
+  document.getElementById('trainBtn').disabled = false;
+  updateTrainingPanel();
   saveHistory(weightMid.toFixed(3), 'seedling', conf);
 }
 
@@ -1091,7 +1290,7 @@ function setDensity(v) { document.getElementById('densityInput').value = v; }
    RESET
 ═══════════════════════════════════════════════════ */
 function resetAll() {
-  imgEl = null; imgData = null; rulerPts = []; rulerPxLen = 0;
+  imgEl = null; imgData = null; rulerPts = []; rulerPxLen = 0; lastPrediction = null;
   document.getElementById('uploadZone').style.display = 'flex';
   document.getElementById('canvasWrap').style.display = 'none';
   document.getElementById('rulerStrip').style.display = 'none';
@@ -1105,1054 +1304,13 @@ function resetAll() {
   document.getElementById('confPct').textContent = '0%';
   document.getElementById('dupBanner').classList.remove('show');
   document.getElementById('fileInput').value = '';
+  document.getElementById('trainBtn').disabled = true;
   updateRulerStatus();
+  updateTrainingPanel();
 }
 
 // Init
 setMode('fresh');
-</script>
-</body>
-</html>
-
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>烟叶/烟苗重量估算系统 v2</title>
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&family=JetBrains+Mono:wght@400;600&display=swap');
-
-:root {
-  --bg: #0f1a0e;
-  --surface: #172414;
-  --card: #1e2f1c;
-  --border: rgba(120,180,80,0.18);
-  --border-active: rgba(120,180,80,0.55);
-  --green: #6db33f;
-  --green-dim: #4a8a2a;
-  --green-bright: #8fd460;
-  --gold: #c8a030;
-  --amber: #e07820;
-  --text: #d8ead0;
-  --muted: #6a8a60;
-  --white: #eef5e8;
-  --danger: #e05040;
-  --warn: #d09020;
-  --info: #40a0c0;
-  --seedling: #30b880;
-}
-
-*{box-sizing:border-box;margin:0;padding:0;}
-
-body {
-  background: var(--bg);
-  color: var(--text);
-  font-family: 'Noto Sans SC', sans-serif;
-  min-height: 100vh;
-}
-
-/* ─── HEADER ─── */
-.header {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 18px 28px;
-  border-bottom: 1px solid var(--border);
-  background: linear-gradient(90deg, rgba(30,47,28,0.9), rgba(15,26,14,0.9));
-  position: sticky; top: 0; z-index: 100;
-  backdrop-filter: blur(8px);
-}
-.header-logo {
-  font-size: 1.8rem; line-height: 1;
-  filter: drop-shadow(0 0 8px rgba(109,179,63,0.5));
-}
-.header-title { font-size: 1.05rem; font-weight: 700; color: var(--white); letter-spacing: .04em; }
-.header-sub { font-size: 0.7rem; color: var(--muted); font-family: 'JetBrains Mono', monospace; margin-top: 2px; }
-.header-right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
-
-/* Mode toggle */
-.mode-toggle {
-  display: flex;
-  background: rgba(0,0,0,0.3);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  overflow: hidden;
-}
-.mode-btn {
-  padding: 6px 14px;
-  font-size: 0.75rem;
-  font-family: 'JetBrains Mono', monospace;
-  font-weight: 600;
-  cursor: pointer;
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  transition: all .2s;
-  letter-spacing: .04em;
-}
-.mode-btn.active-leaf  { background: rgba(109,179,63,0.2); color: var(--green-bright); }
-.mode-btn.active-seedling { background: rgba(48,184,128,0.2); color: var(--seedling); }
-
-/* ─── MAIN LAYOUT ─── */
-.container { max-width: 1100px; margin: 0 auto; padding: 24px 20px; }
-
-/* Duplicate warning banner */
-.dup-banner {
-  display: none;
-  align-items: center;
-  gap: 10px;
-  background: rgba(224,80,64,0.12);
-  border: 1px solid rgba(224,80,64,0.4);
-  border-radius: 10px;
-  padding: 12px 16px;
-  margin-bottom: 18px;
-  font-size: 0.82rem;
-  color: #f08878;
-  animation: slideDown .3s ease;
-}
-.dup-banner.show { display: flex; }
-.dup-banner-icon { font-size: 1.3rem; flex-shrink: 0; }
-.dup-banner b { color: #ff9080; }
-.dup-banner-close { margin-left: auto; cursor: pointer; opacity: .7; font-size: 1rem; }
-.dup-banner-close:hover { opacity: 1; }
-
-@keyframes slideDown { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:none; } }
-
-.grid-main {
-  display: grid;
-  grid-template-columns: 1fr 340px;
-  gap: 18px;
-}
-@media(max-width:820px){ .grid-main{grid-template-columns:1fr;} }
-
-/* ─── UPLOAD / CANVAS CARD ─── */
-.card {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  overflow: hidden;
-}
-.card-head {
-  padding: 12px 18px;
-  border-bottom: 1px solid var(--border);
-  font-size: 0.72rem;
-  font-family: 'JetBrains Mono', monospace;
-  color: var(--muted);
-  letter-spacing: .08em;
-  text-transform: uppercase;
-  display: flex; align-items: center; gap: 8px;
-}
-.dot { width:6px;height:6px;border-radius:50%; }
-.dot-green{background:var(--green);}
-.dot-seed{background:var(--seedling);}
-.dot-gold{background:var(--gold);}
-.dot-warn{background:var(--warn);}
-
-/* Upload zone */
-.upload-zone {
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 10px;
-  padding: 36px;
-  cursor: pointer;
-  border-bottom: 1px solid var(--border);
-  transition: background .2s;
-}
-.upload-zone:hover, .upload-zone.drag-over { background: rgba(109,179,63,0.06); }
-.upload-zone input { display: none; }
-.upload-icon { font-size: 2.2rem; opacity: .5; }
-.upload-text { font-size: 0.85rem; color: var(--muted); }
-.upload-btn {
-  padding: 7px 20px;
-  background: rgba(109,179,63,0.15);
-  border: 1px solid var(--border-active);
-  border-radius: 7px;
-  color: var(--green-bright);
-  font-size: 0.78rem;
-  font-family: 'JetBrains Mono', monospace;
-  cursor: pointer; transition: all .2s;
-}
-.upload-btn:hover { background: rgba(109,179,63,0.28); }
-
-/* Canvas area */
-.canvas-wrap {
-  position: relative;
-  min-height: 300px;
-  display: flex; align-items: center; justify-content: center;
-  overflow: hidden;
-  background: #0a130a;
-}
-#mainCanvas { display: block; max-width: 100%; cursor: crosshair; }
-.canvas-placeholder {
-  text-align: center; color: var(--muted); font-size: 0.82rem; opacity: .5;
-  pointer-events: none;
-}
-
-/* Ruler strip */
-.ruler-strip {
-  padding: 12px 18px;
-  border-top: 1px solid var(--border);
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-}
-.ruler-strip label { font-size: 0.72rem; color: var(--muted); font-family: 'JetBrains Mono', monospace; }
-.ruler-input {
-  width: 80px;
-  background: rgba(0,0,0,.3);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 5px 8px;
-  color: var(--text);
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.82rem;
-  outline: none;
-}
-.ruler-input:focus { border-color: var(--green); }
-.ruler-preset {
-  padding: 4px 10px;
-  background: rgba(0,0,0,.2);
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  color: var(--muted);
-  font-size: 0.72rem;
-  cursor: pointer; transition: all .2s;
-}
-.ruler-preset:hover { border-color: var(--green); color: var(--green-bright); }
-.ruler-status { font-size: 0.72rem; font-family: 'JetBrains Mono', monospace; }
-.ruler-status.ok { color: var(--green-bright); }
-.ruler-status.pending { color: var(--warn); }
-
-/* ─── RIGHT PANEL ─── */
-.side-panel { display: flex; flex-direction: column; gap: 14px; }
-
-/* Params card */
-.params-list { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
-.param-row { display: flex; flex-direction: column; gap: 5px; }
-.param-label {
-  font-size: 0.72rem; color: var(--muted);
-  font-family: 'JetBrains Mono', monospace; letter-spacing: .05em;
-  display: flex; justify-content: space-between; align-items: center;
-}
-.param-val { font-size: 0.78rem; color: var(--white); }
-.param-input {
-  width: 100%;
-  background: rgba(0,0,0,.3);
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  padding: 7px 10px;
-  color: var(--text);
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.82rem;
-  outline: none;
-  transition: border-color .2s;
-}
-.param-input:focus { border-color: var(--green); }
-input[type=range].slider {
-  -webkit-appearance: none; width: 100%; height: 4px;
-  background: rgba(109,179,63,.25);
-  border-radius: 2px; outline: none; cursor: pointer;
-}
-input[type=range].slider::-webkit-slider-thumb {
-  -webkit-appearance: none; width: 14px; height: 14px;
-  border-radius: 50%; background: var(--green); cursor: pointer;
-  box-shadow: 0 0 6px rgba(109,179,63,.5);
-}
-
-/* Seedling params (hidden by default) */
-.seedling-params { display: none; }
-.seedling-params.show { display: contents; }
-
-/* Density presets */
-.density-presets { display: flex; flex-wrap: wrap; gap: 5px; }
-.dpreset {
-  padding: 3px 8px;
-  background: rgba(0,0,0,.2);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  font-size: 0.68rem; font-family: 'JetBrains Mono', monospace;
-  cursor: pointer; color: var(--muted); transition: all .18s;
-}
-.dpreset:hover { border-color: var(--gold); color: var(--gold); }
-
-/* Result card */
-.result-pad { padding: 16px; }
-.result-weight {
-  text-align: center;
-  background: linear-gradient(135deg, rgba(109,179,63,0.08), rgba(200,160,48,0.08));
-  border: 1px solid rgba(109,179,63,.2);
-  border-radius: 10px;
-  padding: 16px;
-  margin-bottom: 12px;
-}
-.result-weight-num {
-  font-size: 2.8rem; font-weight: 700; color: var(--green-bright);
-  font-family: 'JetBrains Mono', monospace; line-height: 1;
-}
-.result-weight-unit { font-size: 1rem; color: var(--gold); margin-left: 4px; }
-.result-weight-label { font-size: 0.68rem; color: var(--muted); margin-top: 4px; letter-spacing: .08em; }
-.result-range { font-size: 0.72rem; font-family: 'JetBrains Mono', monospace; color: var(--muted); margin-top: 6px; }
-
-/* For seedling result */
-.result-weight.seedling-mode { border-color: rgba(48,184,128,.3); background: linear-gradient(135deg,rgba(48,184,128,.08),rgba(48,184,128,.04)); }
-.result-weight.seedling-mode .result-weight-num { color: var(--seedling); }
-
-.result-rows { display: flex; flex-direction: column; gap: 6px; }
-.result-row {
-  display: flex; justify-content: space-between; align-items: center;
-  font-size: 0.78rem;
-  padding: 6px 8px;
-  background: rgba(0,0,0,.15);
-  border-radius: 6px;
-}
-.result-row-key { color: var(--muted); }
-.result-row-val { font-family: 'JetBrains Mono', monospace; color: var(--white); }
-
-/* Confidence */
-.conf-bar-wrap { margin-top: 10px; }
-.conf-bar-label { display: flex; justify-content: space-between; font-size: 0.7rem; color: var(--muted); margin-bottom: 5px; }
-.conf-bar { height: 6px; background: rgba(255,255,255,.06); border-radius: 3px; overflow: hidden; }
-.conf-fill { height: 100%; background: linear-gradient(90deg, var(--green-dim), var(--green-bright)); border-radius: 3px; transition: width 1s ease; width: 0%; }
-
-/* Mode badge */
-.mode-badge {
-  display: inline-block;
-  padding: 2px 8px; border-radius: 4px;
-  font-size: 0.65rem; font-family: 'JetBrains Mono', monospace;
-  font-weight: 600; letter-spacing: .04em;
-}
-.mode-badge.leaf { background: rgba(109,179,63,.15); color: var(--green-bright); border: 1px solid rgba(109,179,63,.3); }
-.mode-badge.seedling { background: rgba(48,184,128,.15); color: var(--seedling); border: 1px solid rgba(48,184,128,.3); }
-
-/* Buttons */
-.btn-row { display: flex; gap: 8px; margin-top: 14px; }
-.btn-main {
-  flex: 1; padding: 11px;
-  background: linear-gradient(135deg, var(--green-dim), var(--green));
-  color: #fff; font-weight: 700; font-size: 0.85rem;
-  font-family: 'JetBrains Mono', monospace;
-  border: none; border-radius: 9px; cursor: pointer;
-  transition: all .2s;
-  box-shadow: 0 3px 14px rgba(109,179,63,.25);
-  letter-spacing: .05em;
-}
-.btn-main:hover:not(:disabled) { opacity: .88; transform: translateY(-1px); box-shadow: 0 5px 20px rgba(109,179,63,.35); }
-.btn-main:disabled { opacity: .35; cursor: not-allowed; transform: none; }
-.btn-main.seedling-style { background: linear-gradient(135deg, #20906a, var(--seedling)); box-shadow: 0 3px 14px rgba(48,184,128,.25); }
-.btn-reset {
-  padding: 11px 14px;
-  background: rgba(255,255,255,.06);
-  border: 1px solid var(--border);
-  border-radius: 9px; color: var(--muted);
-  font-size: 0.82rem; cursor: pointer; transition: all .2s;
-}
-.btn-reset:hover { border-color: var(--border-active); color: var(--text); }
-
-/* ─── HISTORY ─── */
-.history-section { margin-top: 22px; }
-.section-title {
-  font-size: 0.7rem; font-family: 'JetBrains Mono', monospace;
-  color: var(--muted); letter-spacing: .1em; text-transform: uppercase;
-  display: flex; align-items: center; gap: 8px; margin-bottom: 12px;
-}
-.section-title::after { content:''; flex:1; height:1px; background: var(--border); }
-
-.history-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
-.history-item {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 10px; overflow: hidden;
-  transition: border-color .2s, transform .2s;
-  cursor: default;
-}
-.history-item:hover { border-color: var(--border-active); transform: translateY(-2px); }
-.history-item.is-dup { border-color: rgba(224,80,64,.4); }
-.history-thumb { width: 100%; height: 90px; object-fit: cover; opacity: .8; }
-.history-info { padding: 8px 10px; display: flex; justify-content: space-between; align-items: center; }
-.history-weight { font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; font-weight: 600; }
-.history-weight.leaf-w { color: var(--green-bright); }
-.history-weight.seed-w { color: var(--seedling); }
-.history-meta { font-size: 0.65rem; color: var(--muted); }
-.dup-tag {
-  display: block; text-align: center;
-  background: rgba(224,80,64,.12); color: #f08878;
-  font-size: 0.65rem; font-family: 'JetBrains Mono', monospace;
-  padding: 3px 0; border-top: 1px solid rgba(224,80,64,.2);
-}
-
-/* Tips */
-.tips-box {
-  background: rgba(64,160,192,.07);
-  border: 1px solid rgba(64,160,192,.2);
-  border-radius: 10px; padding: 12px 14px;
-  font-size: 0.78rem; color: rgba(160,220,240,.8);
-  line-height: 1.8;
-  margin-top: 14px;
-}
-.tips-box .tips-title { font-weight: 700; color: var(--info); margin-bottom: 6px; font-size: 0.78rem; }
-
-/* Seedling info panel */
-.seedling-info {
-  display: none;
-  background: rgba(48,184,128,.06);
-  border: 1px solid rgba(48,184,128,.2);
-  border-radius: 10px; padding: 12px 14px;
-  font-size: 0.78rem; line-height: 1.8;
-  color: rgba(160,240,200,.8);
-  margin-top: 14px;
-}
-.seedling-info.show { display: block; }
-.seedling-info .si-title { font-weight: 700; color: var(--seedling); margin-bottom: 8px; }
-.si-table { width: 100%; border-collapse: collapse; font-size: 0.72rem; font-family: 'JetBrains Mono', monospace; }
-.si-table th { color: var(--seedling); text-align: left; padding: 3px 6px; border-bottom: 1px solid rgba(48,184,128,.2); }
-.si-table td { padding: 4px 6px; color: rgba(160,240,200,.7); border-bottom: 1px solid rgba(48,184,128,.08); }
-
-footer {
-  text-align: center; padding: 20px;
-  font-size: 0.7rem; color: var(--muted);
-  font-family: 'JetBrains Mono', monospace;
-  border-top: 1px solid var(--border);
-  margin-top: 32px;
-  opacity: .6;
-}
-</style>
-</head>
-<body>
-
-<!-- HEADER -->
-<div class="header">
-  <div class="header-logo">🌿</div>
-  <div>
-    <div class="header-title">烟叶 / 烟苗重量估算系统</div>
-    <div class="header-sub">TOBACCO WEIGHT ESTIMATOR · LOCAL PROCESSING · v2.0</div>
-  </div>
-  <div class="header-right">
-    <div class="mode-toggle">
-      <button class="mode-btn active-leaf" id="btnLeaf" onclick="setMode('leaf')">🌾 烟叶</button>
-      <button class="mode-btn" id="btnSeedling" onclick="setMode('seedling')">🌱 烟苗</button>
-    </div>
-  </div>
-</div>
-
-<div class="container">
-
-  <!-- Duplicate warning -->
-  <div class="dup-banner" id="dupBanner">
-    <span class="dup-banner-icon">⚠️</span>
-    <div>
-      <b>检测到重复图片！</b>
-      与历史记录中的 "<span id="dupMatchName"></span>" 高度相似（相似度 <span id="dupSimilarity"></span>%）。
-      建议确认是否重复上传，避免重复计重。
-    </div>
-    <span class="dup-banner-close" onclick="closeDupBanner()">✕</span>
-  </div>
-
-  <div class="grid-main">
-
-    <!-- LEFT: Image + canvas -->
-    <div>
-      <div class="card">
-        <div class="card-head">
-          <span class="dot dot-green"></span>
-          <span id="cardHeadLabel">图像 · 点击两点设置比例尺</span>
-          <span id="currentModeBadge" class="mode-badge leaf" style="margin-left:auto;">烟叶模式</span>
-        </div>
-
-        <!-- Upload zone (shown when no image) -->
-        <div class="upload-zone" id="uploadZone"
-          ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)"
-          onclick="document.getElementById('fileInput').click()">
-          <input type="file" id="fileInput" accept="image/jpg,image/jpeg,image/png,image/webp" onchange="onFileSelect(event)">
-          <div class="upload-icon">📷</div>
-          <div class="upload-text">拖拽图片到此处，或点击选择</div>
-          <div class="upload-text" style="font-size:.72rem;">支持 JPG、PNG、WEBP · 图片仅在本地浏览器处理</div>
-          <span class="upload-btn">选择图片</span>
-        </div>
-
-        <!-- Canvas (shown after upload) -->
-        <div class="canvas-wrap" id="canvasWrap" style="display:none;">
-          <canvas id="mainCanvas"></canvas>
-        </div>
-
-        <!-- Ruler strip -->
-        <div class="ruler-strip" id="rulerStrip" style="display:none;">
-          <label>参考线长度</label>
-          <input type="number" class="ruler-input" id="rulerLen" value="21" min="1" step="0.1" oninput="updateRulerStatus()">
-          <label>cm</label>
-          <button class="ruler-preset" onclick="setRuler(21)">A4短边 21</button>
-          <button class="ruler-preset" onclick="setRuler(29.7)">A4长边 29.7</button>
-          <button class="ruler-preset" onclick="setRuler(100)">标尺 100</button>
-          <button class="ruler-preset" onclick="setRuler(30)">砖块 30</button>
-          <span class="ruler-status pending" id="rulerStatus">请在图上点击两点画参考线</span>
-        </div>
-      </div>
-
-      <!-- Seedling info table -->
-      <div class="seedling-info" id="seedlingInfo">
-        <div class="si-title">🌱 烟苗重量参考标准（含基质）</div>
-        <table class="si-table">
-          <tr><th>叶期</th><th>苗高</th><th>单苗鲜重</th><th>含基质单孔重</th></tr>
-          <tr><td>2~3叶期</td><td>3~6 cm</td><td>0.5~1.5 g</td><td>20~30 g</td></tr>
-          <tr><td>4~5叶期</td><td>6~12 cm</td><td>2~5 g</td><td>25~40 g</td></tr>
-          <tr><td>6~7叶期（壮苗）</td><td>10~18 cm</td><td>6~15 g</td><td>35~55 g</td></tr>
-          <tr><td>成苗（移栽前）</td><td>15~22 cm</td><td>12~25 g</td><td>45~70 g</td></tr>
-        </table>
-      </div>
-
-      <!-- Tips -->
-      <div class="tips-box" id="tipsBox">
-        <div class="tips-title">📌 提升精度建议</div>
-        · 拍摄时将 A4 纸或标尺放入画面作为参考物<br>
-        · 正上方俯拍，尽量避免倾斜角度<br>
-        · 保持固定光照与背景，减少颜色干扰<br>
-        · 识别后记录"图片 + 实际称重"，积累数据后可训练专属模型
-      </div>
-    </div>
-
-    <!-- RIGHT PANEL -->
-    <div class="side-panel">
-
-      <!-- Params -->
-      <div class="card">
-        <div class="card-head"><span class="dot dot-gold"></span>估算参数</div>
-        <div class="params-list">
-
-          <!-- Leaf params -->
-          <div class="leaf-params" id="leafParams">
-            <div class="param-row">
-              <div class="param-label">堆积平均厚度 <span class="param-val" id="thickVal">5 cm</span></div>
-              <input type="range" class="slider" id="thickSlider" min="1" max="50" value="5" step="0.5" oninput="document.getElementById('thickVal').textContent=this.value+' cm'">
-              <input type="number" class="param-input" id="thickInput" value="5" min="0.1" step="0.5" oninput="document.getElementById('thickSlider').value=this.value;document.getElementById('thickVal').textContent=this.value+' cm'">
-            </div>
-            <div class="param-row">
-              <div class="param-label">松散堆积密度 (kg/m³)</div>
-              <input type="number" class="param-input" id="densityInput" value="180" min="50" max="600">
-              <div class="density-presets">
-                <span class="dpreset" onclick="setDensity(160,this)" title="新鲜绿叶">新鲜叶 160</span>
-                <span class="dpreset" onclick="setDensity(180,this)" title="晾晒中">晾晒中 180</span>
-                <span class="dpreset" onclick="setDensity(150,this)" title="烤后干叶">烤后 150</span>
-                <span class="dpreset" onclick="setDensity(380,this)" title="压捆">压捆 380</span>
-              </div>
-            </div>
-            <div class="param-row">
-              <div class="param-label">颜色识别灵敏度 <span class="param-val" id="sensVal">55</span></div>
-              <input type="range" class="slider" id="sensSlider" min="10" max="120" value="55" oninput="document.getElementById('sensVal').textContent=this.value">
-            </div>
-          </div>
-
-          <!-- Seedling params -->
-          <div class="seedling-params" id="seedlingParams">
-            <div class="param-row">
-              <div class="param-label">穴盘孔数</div>
-              <div class="density-presets">
-                <span class="dpreset" onclick="setTraySize(128,this)">128孔</span>
-                <span class="dpreset" onclick="setTraySize(153,this)">153孔</span>
-                <span class="dpreset" onclick="setTraySize(200,this)">200孔</span>
-                <span class="dpreset" onclick="setTraySize(0,this)">散苗</span>
-              </div>
-              <input type="number" class="param-input" id="traySizeInput" value="128" min="1" placeholder="穴孔数">
-            </div>
-            <div class="param-row">
-              <div class="param-label">叶期阶段</div>
-              <select class="param-input" id="seedStageSelect" onchange="onStageChange()">
-                <option value="2">2~3叶期（小苗）</option>
-                <option value="4" selected>4~5叶期（中苗）</option>
-                <option value="6">6~7叶期（壮苗）</option>
-                <option value="8">成苗（移栽前）</option>
-              </select>
-            </div>
-            <div class="param-row">
-              <div class="param-label">是否含基质/泥土</div>
-              <div class="density-presets">
-                <span class="dpreset" onclick="setSubstrate(true,this)">含基质</span>
-                <span class="dpreset" onclick="setSubstrate(false,this)">裸苗</span>
-              </div>
-            </div>
-            <div class="param-row">
-              <div class="param-label">颜色识别灵敏度 <span class="param-val" id="sensSeedVal">45</span></div>
-              <input type="range" class="slider" id="sensSeedSlider" min="10" max="120" value="45" oninput="document.getElementById('sensSeedVal').textContent=this.value">
-            </div>
-          </div>
-
-        </div>
-      </div>
-
-      <!-- Result -->
-      <div class="card">
-        <div class="card-head"><span class="dot dot-green" id="resultDot"></span>识别结果</div>
-        <div class="result-pad">
-          <div class="result-weight" id="resultWeight">
-            <div class="result-weight-num" id="resultNum">--</div><span class="result-weight-unit">kg</span>
-            <div class="result-weight-label">ESTIMATED WEIGHT</div>
-            <div class="result-range" id="resultRange">范围 -- ~ -- kg</div>
-          </div>
-          <div class="result-rows">
-            <div class="result-row"><span class="result-row-key">识别面积</span><span class="result-row-val" id="resArea">--</span></div>
-            <div class="result-row" id="resRow2"><span class="result-row-key">堆积体积</span><span class="result-row-val" id="resVol">--</span></div>
-            <div class="result-row"><span class="result-row-key">可信度</span><span class="result-row-val" id="resConf">--</span></div>
-            <div class="result-row" id="resModeRow"><span class="result-row-key">识别模式</span><span class="result-row-val" id="resMode">烟叶模式</span></div>
-          </div>
-          <div class="conf-bar-wrap">
-            <div class="conf-bar-label"><span>可信度</span><span id="confPct">0%</span></div>
-            <div class="conf-bar"><div class="conf-fill" id="confFill"></div></div>
-          </div>
-          <div class="btn-row">
-            <button class="btn-main" id="analyzeBtn" onclick="analyze()" disabled>🔬 开始识别</button>
-            <button class="btn-reset" onclick="resetAll()">↺</button>
-          </div>
-        </div>
-      </div>
-
-    </div><!-- /side-panel -->
-  </div><!-- /grid-main -->
-
-  <!-- History -->
-  <div class="history-section" id="historySection" style="display:none;">
-    <div class="section-title">历史记录</div>
-    <div class="history-grid" id="historyGrid"></div>
-  </div>
-
-</div><!-- /container -->
-
-<footer>烟叶/烟苗重量估算系统 v2.0 · 图片仅在本地浏览器处理，不上传任何服务器 · 结果仅供参考，实际重量以物理称量为准</footer>
-
-<script>
-/* ═══════════════════════════════════════════════════
-   STATE
-═══════════════════════════════════════════════════ */
-let mode = 'leaf'; // 'leaf' | 'seedling'
-let imgEl = null;
-let imgData = null;        // ImageData for color analysis
-let rulerPts = [];         // [{x,y},{x,y}]
-let rulerPxLen = 0;        // pixels
-let historyItems = [];
-let hasSubstrate = true;
-let traySize = 128;
-
-// Seedling stage weights (g per seedling)
-const STAGE_WEIGHT = {
-  2: { min:0.5, mid:1.0, max:1.5 },
-  4: { min:2,   mid:3.5, max:5   },
-  6: { min:6,   mid:10,  max:15  },
-  8: { min:12,  mid:18,  max:25  }
-};
-// Substrate weight per cell (g)
-const SUBSTRATE_WEIGHT = {
-  2: { min:18, mid:24, max:30 },
-  4: { min:22, mid:30, max:38 },
-  6: { min:30, mid:40, max:52 },
-  8: { min:38, mid:52, max:68 }
-};
-
-/* ═══════════════════════════════════════════════════
-   MODE SWITCH
-═══════════════════════════════════════════════════ */
-function setMode(m) {
-  mode = m;
-  document.getElementById('btnLeaf').className = 'mode-btn' + (m==='leaf'?' active-leaf':'');
-  document.getElementById('btnSeedling').className = 'mode-btn' + (m==='seedling'?' active-seedling':'');
-  document.getElementById('leafParams').style.display = m==='leaf'?'contents':'none';
-  document.getElementById('seedlingParams').className = 'seedling-params' + (m==='seedling'?' show':'');
-  document.getElementById('seedlingInfo').className = 'seedling-info' + (m==='seedling'?' show':'');
-  document.getElementById('currentModeBadge').textContent = m==='leaf'?'烟叶模式':'烟苗模式';
-  document.getElementById('currentModeBadge').className = 'mode-badge ' + m;
-  document.getElementById('resMode').textContent = m==='leaf'?'烟叶模式':'烟苗模式';
-  document.getElementById('cardHeadLabel').textContent = m==='leaf'?'图像 · 点击两点设置比例尺':'图像 · 点击两点设置比例尺（烟苗模式）';
-  document.getElementById('resultWeight').className = 'result-weight' + (m==='seedling'?' seedling-mode':'');
-  const btn = document.getElementById('analyzeBtn');
-  btn.className = 'btn-main' + (m==='seedling'?' seedling-style':'');
-  btn.textContent = m==='leaf'?'🔬 开始识别':'🌱 识别烟苗';
-  // resRow2 label
-  document.querySelector('#resRow2 .result-row-key').textContent = m==='leaf'?'堆积体积':'穴盘孔数';
-}
-
-function setTraySize(n, el) {
-  traySize = n;
-  document.getElementById('traySizeInput').value = n || '';
-  document.querySelectorAll('#seedlingParams .dpreset').forEach(e=>e.style.borderColor='');
-}
-
-function setSubstrate(v, el) { hasSubstrate = v; }
-
-function onStageChange() {}
-
-/* ═══════════════════════════════════════════════════
-   FILE UPLOAD
-═══════════════════════════════════════════════════ */
-function onDragOver(e){ e.preventDefault(); document.getElementById('uploadZone').classList.add('drag-over'); }
-function onDragLeave(e){ document.getElementById('uploadZone').classList.remove('drag-over'); }
-function onDrop(e){ e.preventDefault(); document.getElementById('uploadZone').classList.remove('drag-over'); const f=e.dataTransfer.files[0]; if(f&&f.type.match(/image/)) loadFile(f); }
-function onFileSelect(e){ const f=e.target.files[0]; if(f) loadFile(f); }
-
-function loadFile(file) {
-  const reader = new FileReader();
-  reader.onload = function(e) {
-    const src = e.target.result;
-    const img = new Image();
-    img.onload = function() {
-      imgEl = img;
-      rulerPts = [];
-      rulerPxLen = 0;
-
-      // Show canvas
-      document.getElementById('uploadZone').style.display = 'none';
-      document.getElementById('canvasWrap').style.display = 'flex';
-      document.getElementById('rulerStrip').style.display = 'flex';
-
-      renderCanvas();
-      extractImgData();
-      document.getElementById('analyzeBtn').disabled = false;
-      updateRulerStatus();
-
-      // Duplicate detection
-      checkDuplicate(src, file.name);
-    };
-    img.src = src;
-  };
-  reader.readAsDataURL(file);
-}
-
-/* ═══════════════════════════════════════════════════
-   CANVAS RENDER
-═══════════════════════════════════════════════════ */
-function renderCanvas() {
-  const wrap = document.getElementById('canvasWrap');
-  const canvas = document.getElementById('mainCanvas');
-  const maxW = wrap.clientWidth || 600;
-  const maxH = 420;
-  let w = imgEl.naturalWidth, h = imgEl.naturalHeight;
-  const scale = Math.min(maxW/w, maxH/h, 1);
-  canvas.width  = w * scale;
-  canvas.height = h * scale;
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(imgEl, 0, 0, canvas.width, canvas.height);
-
-  // Draw ruler points & line
-  if (rulerPts.length > 0) {
-    ctx.fillStyle = '#ffcc00';
-    ctx.beginPath(); ctx.arc(rulerPts[0].x, rulerPts[0].y, 6, 0, Math.PI*2); ctx.fill();
-  }
-  if (rulerPts.length === 2) {
-    ctx.strokeStyle = '#ffcc00';
-    ctx.lineWidth = 2;
-    ctx.setLineDash([6,4]);
-    ctx.beginPath(); ctx.moveTo(rulerPts[0].x,rulerPts[0].y); ctx.lineTo(rulerPts[1].x,rulerPts[1].y); ctx.stroke();
-    ctx.fillStyle = '#ffcc00';
-    ctx.beginPath(); ctx.arc(rulerPts[1].x, rulerPts[1].y, 6, 0, Math.PI*2); ctx.fill();
-    // length label
-    const mx=(rulerPts[0].x+rulerPts[1].x)/2, my=(rulerPts[0].y+rulerPts[1].y)/2;
-    ctx.font='bold 12px JetBrains Mono, monospace';
-    ctx.fillStyle='#fff';
-    ctx.fillText(document.getElementById('rulerLen').value+' cm', mx+6, my-6);
-    rulerPxLen = Math.hypot(rulerPts[1].x-rulerPts[0].x, rulerPts[1].y-rulerPts[0].y);
-  }
-}
-
-document.getElementById('mainCanvas').addEventListener('click', function(e) {
-  if (!imgEl) return;
-  const rect = this.getBoundingClientRect();
-  const x = e.clientX - rect.left, y = e.clientY - rect.top;
-  if (rulerPts.length >= 2) rulerPts = [];
-  rulerPts.push({x, y});
-  renderCanvas();
-  updateRulerStatus();
-});
-
-function updateRulerStatus() {
-  const el = document.getElementById('rulerStatus');
-  if (rulerPts.length === 0) { el.textContent='请在图上点击两点画参考线'; el.className='ruler-status pending'; }
-  else if (rulerPts.length === 1) { el.textContent='请点击第二个点'; el.className='ruler-status pending'; }
-  else { el.textContent='✓ 比例尺已设置'; el.className='ruler-status ok'; }
-}
-
-function setRuler(v) { document.getElementById('rulerLen').value = v; renderCanvas(); }
-
-/* ═══════════════════════════════════════════════════
-   COLOR ANALYSIS
-═══════════════════════════════════════════════════ */
-function extractImgData() {
-  const offscreen = document.createElement('canvas');
-  offscreen.width = 200; offscreen.height = 200;
-  const ctx = offscreen.getContext('2d');
-  ctx.drawImage(imgEl, 0, 0, 200, 200);
-  imgData = ctx.getImageData(0,0,200,200);
-}
-
-function countTargetPixels(sensitivity) {
-  if (!imgData) return { count: 0, total: 200*200 };
-  const data = imgData.data;
-  const total = 200*200;
-  let count = 0;
-  const isSeedling = mode === 'seedling';
-
-  for (let i = 0; i < total; i++) {
-    const r = data[i*4], g = data[i*4+1], b = data[i*4+2];
-    // HSV conversion
-    const rn=r/255, gn=g/255, bn=b/255;
-    const max=Math.max(rn,gn,bn), min=Math.min(rn,gn,bn);
-    const d=max-min;
-    let h=0, s=max===0?0:d/max, v=max;
-    if(d!==0){
-      if(max===rn) h=((gn-bn)/d)%6;
-      else if(max===gn) h=(bn-rn)/d+2;
-      else h=(rn-gn)/d+4;
-      h=h*60; if(h<0)h+=360;
-    }
-    const hn=h/360, sn=s, vn=v;
-
-    let match = false;
-    if (isSeedling) {
-      // Seedling: fresh green, yellow-green, light green
-      const greenRange = hn>0.18 && hn<0.42 && sn>0.15 && vn>0.15;
-      const yellowGreen = hn>0.13 && hn<0.22 && sn>0.1 && vn>0.2;
-      match = (greenRange || yellowGreen) && vn < 0.92;
-    } else {
-      // Leaf: green, yellow-green, brown-green, dry yellow-brown
-      const green = hn>0.15 && hn<0.40 && sn>(0.08-sensitivity/1800) && vn>0.08;
-      const yellowBrown = hn>0.06 && hn<0.18 && sn>0.08 && vn>0.15 && vn<0.85;
-      const brownLeaf = hn>0.04 && hn<0.12 && sn>0.12 && vn>0.1 && vn<0.75;
-      match = green || yellowBrown || brownLeaf;
-    }
-    if (match) count++;
-  }
-  return { count, total };
-}
-
-/* ═══════════════════════════════════════════════════
-   ANALYZE
-═══════════════════════════════════════════════════ */
-function analyze() {
-  if (!imgEl) return;
-
-  if (mode === 'leaf') analyzeleaf();
-  else analyzeSeedling();
-}
-
-function analyzeleaf() {
-  const sensitivity = parseInt(document.getElementById('sensSlider').value);
-  const thickness_cm = parseFloat(document.getElementById('thickInput').value) || 5;
-  const density = parseFloat(document.getElementById('densityInput').value) || 180;
-  const rulerLenCm = parseFloat(document.getElementById('rulerLen').value) || 21;
-
-  const { count, total } = countTargetPixels(sensitivity);
-  const leafRatio = count / total;
-
-  // Pixel to real scale
-  let pxPerCm = 10; // fallback
-  if (rulerPxLen > 0 && rulerLenCm > 0) {
-    // ruler drawn on display canvas (200px offscreen scale)
-    const canvas = document.getElementById('mainCanvas');
-    const scaleX = 200 / canvas.width;
-    pxPerCm = (rulerPxLen * scaleX) / rulerLenCm;
-  }
-
-  const imgW_cm = 200 / pxPerCm;
-  const imgH_cm = 200 / pxPerCm;
-  const totalAreaCm2 = imgW_cm * imgH_cm;
-  const leafAreaCm2 = totalAreaCm2 * leafRatio;
-  const leafAreaM2 = leafAreaCm2 / 10000;
-
-  const thickness_m = thickness_cm / 100;
-  const volumeM3 = leafAreaM2 * thickness_m;
-  const weightKg = volumeM3 * density;
-
-  // Confidence
-  const haRuler = rulerPts.length === 2;
-  const leafPct = leafRatio * 100;
-  let conf = 40;
-  if (haRuler) conf += 30;
-  if (leafPct > 10 && leafPct < 90) conf += 15;
-  if (leafPct >= 20 && leafPct <= 75) conf += 10;
-  conf = Math.min(conf, 92);
-
-  const rangeMin = (weightKg * 0.65).toFixed(2);
-  const rangeMax = (weightKg * 1.40).toFixed(2);
-
-  showResult(weightKg.toFixed(2), leafAreaM2.toFixed(4)+' m²', volumeM3.toFixed(5)+' m³', conf);
-  document.getElementById('resultRange').textContent = `范围 ${rangeMin} ~ ${rangeMax} kg`;
-  saveHistory(weightKg.toFixed(2), 'leaf', conf);
-}
-
-function analyzeSeedling() {
-  const sensitivity = parseInt(document.getElementById('sensSeedSlider').value);
-  const stage = parseInt(document.getElementById('seedStageSelect').value);
-  const tray = parseInt(document.getElementById('traySizeInput').value) || traySize || 128;
-  const rulerLenCm = parseFloat(document.getElementById('rulerLen').value) || 21;
-
-  const { count, total } = countTargetPixels(sensitivity);
-  const seedRatio = count / total;
-
-  // Area-based seedling count estimation if no tray set
-  let pxPerCm = 10;
-  if (rulerPxLen > 0 && rulerLenCm > 0) {
-    const canvas = document.getElementById('mainCanvas');
-    const scaleX = 200 / canvas.width;
-    pxPerCm = (rulerPxLen * scaleX) / rulerLenCm;
-  }
-  const imgW_cm = 200 / pxPerCm;
-  const imgH_cm = 200 / pxPerCm;
-  const totalAreaCm2 = imgW_cm * imgH_cm;
-  const seedAreaCm2 = totalAreaCm2 * seedRatio;
-
-  // Use tray count if given, otherwise estimate from area
-  let seedCount = tray;
-  if (tray === 0) {
-    // estimate: avg seedling occupies stage-dependent cm2
-    const avgCm2PerSeed = { 2:8, 4:20, 6:40, 8:65 };
-    seedCount = Math.round(seedAreaCm2 / (avgCm2PerSeed[stage] || 20));
-    seedCount = Math.max(1, seedCount);
-  }
-
-  const sw = STAGE_WEIGHT[stage] || STAGE_WEIGHT[4];
-  let weightMin, weightMid, weightMax;
-  if (hasSubstrate) {
-    const sub = SUBSTRATE_WEIGHT[stage] || SUBSTRATE_WEIGHT[4];
-    weightMin = seedCount * (sw.min + sub.min) / 1000;
-    weightMid = seedCount * (sw.mid + sub.mid) / 1000;
-    weightMax = seedCount * (sw.max + sub.max) / 1000;
-  } else {
-    weightMin = seedCount * sw.min / 1000;
-    weightMid = seedCount * sw.mid / 1000;
-    weightMax = seedCount * sw.max / 1000;
-  }
-
-  // Confidence
-  let conf = 45;
-  if (rulerPts.length === 2) conf += 20;
-  if (tray > 0) conf += 20;
-  conf = Math.min(conf, 88);
-
-  showResult(weightMid.toFixed(3), (seedAreaCm2/10000).toFixed(4)+' m²', tray>0?tray+'孔 x '+seedCount+'苗':seedCount+'苗(估算)', conf, true);
-  document.getElementById('resultRange').textContent = `范围 ${weightMin.toFixed(3)} ~ ${weightMax.toFixed(3)} kg`;
-  saveHistory(weightMid.toFixed(3), 'seedling', conf);
-}
-
-function showResult(weight, area, vol, conf, isSeedling) {
-  document.getElementById('resultNum').textContent = weight;
-  document.getElementById('resArea').textContent = area;
-  document.getElementById('resVol').textContent = vol;
-  const confText = conf >= 70 ? '高 ('+conf+'%)' : conf >= 45 ? '中 ('+conf+'%)' : '低 ('+conf+'%)';
-  document.getElementById('resConf').textContent = confText;
-  document.getElementById('confPct').textContent = conf+'%';
-  document.getElementById('confFill').style.width = conf+'%';
-  document.querySelector('#resRow2 .result-row-key').textContent = mode==='seedling'?'苗数估算':'堆积体积';
-}
-
-/* ═══════════════════════════════════════════════════
-   DUPLICATE DETECTION  (perceptual hash - average hash)
-═══════════════════════════════════════════════════ */
-function computeAHash(imageDataArr) {
-  // Reduce to 8×8 = 64 pixels on offscreen canvas
-  const size = 8;
-  const oc = document.createElement('canvas'); oc.width=size; oc.height=size;
-  const ctx = oc.getContext('2d');
-  // Draw from imgEl
-  ctx.drawImage(imgEl, 0, 0, size, size);
-  const d = ctx.getImageData(0,0,size,size).data;
-  const grays = [];
-  for (let i=0; i<size*size; i++) grays.push(0.299*d[i*4]+0.587*d[i*4+1]+0.114*d[i*4+2]);
-  const avg = grays.reduce((a,b)=>a+b,0)/grays.length;
-  return grays.map(g=>g>=avg?1:0);
-}
-
-function hammingDistance(a, b) {
-  let d=0; for(let i=0;i<a.length;i++) if(a[i]!==b[i]) d++; return d;
-}
-
-function checkDuplicate(src, fname) {
-  const hash = computeAHash();
-  let maxSim = 0, matchName = '';
-
-  for (const item of historyItems) {
-    if (!item.hash) continue;
-    const dist = hammingDistance(hash, item.hash);
-    const sim = Math.round((1 - dist/64)*100);
-    if (sim > maxSim) { maxSim = sim; matchName = item.name; }
-  }
-
-  // Store hash in pending state (will be saved to history on analyze)
-  window._pendingHash = hash;
-  window._pendingName = fname;
-
-  if (maxSim >= 85) {
-    document.getElementById('dupMatchName').textContent = matchName;
-    document.getElementById('dupSimilarity').textContent = maxSim;
-    document.getElementById('dupBanner').classList.add('show');
-  } else {
-    document.getElementById('dupBanner').classList.remove('show');
-  }
-}
-
-function closeDupBanner() { document.getElementById('dupBanner').classList.remove('show'); }
-
-/* ═══════════════════════════════════════════════════
-   HISTORY
-═══════════════════════════════════════════════════ */
-function saveHistory(weight, type, conf) {
-  const oc = document.createElement('canvas'); oc.width=200; oc.height=110;
-  oc.getContext('2d').drawImage(imgEl, 0, 0, 200, 110);
-  const thumb = oc.toDataURL('image/jpeg', 0.6);
-  const now = new Date();
-  const timeStr = now.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});
-
-  const hash = window._pendingHash || null;
-  const name = window._pendingName || '未知';
-
-  // Check dup again for this entry
-  let isDup = false;
-  for (const h of historyItems) {
-    if (h.hash && hash) {
-      const sim = Math.round((1-hammingDistance(hash,h.hash)/64)*100);
-      if (sim >= 85) { isDup=true; break; }
-    }
-  }
-
-  historyItems.unshift({ thumb, weight, type, conf, timeStr, hash, name, isDup });
-  if (historyItems.length > 12) historyItems.pop();
-  renderHistory();
-}
-
-function renderHistory() {
-  const sec = document.getElementById('historySection');
-  const grid = document.getElementById('historyGrid');
-  if (!historyItems.length) { sec.style.display='none'; return; }
-  sec.style.display='block';
-  grid.innerHTML = historyItems.map(h=>`
-    <div class="history-item ${h.isDup?'is-dup':''}">
-      <img class="history-thumb" src="${h.thumb}" alt="">
-      <div class="history-info">
-        <span class="history-weight ${h.type==='leaf'?'leaf-w':'seed-w'}">${h.weight} kg</span>
-        <span class="history-meta">${h.type==='leaf'?'🌾':'🌱'} ${h.timeStr}</span>
-      </div>
-      ${h.isDup?'<span class="dup-tag">⚠ 疑似重复</span>':''}
-    </div>
-  `).join('');
-}
-
-/* ═══════════════════════════════════════════════════
-   DENSITY PRESETS
-═══════════════════════════════════════════════════ */
-function setDensity(v) { document.getElementById('densityInput').value = v; }
-
-/* ═══════════════════════════════════════════════════
-   RESET
-═══════════════════════════════════════════════════ */
-function resetAll() {
-  imgEl = null; imgData = null; rulerPts = []; rulerPxLen = 0;
-  document.getElementById('uploadZone').style.display = 'flex';
-  document.getElementById('canvasWrap').style.display = 'none';
-  document.getElementById('rulerStrip').style.display = 'none';
-  document.getElementById('analyzeBtn').disabled = true;
-  document.getElementById('resultNum').textContent = '--';
-  document.getElementById('resultRange').textContent = '范围 -- ~ -- kg';
-  document.getElementById('resArea').textContent = '--';
-  document.getElementById('resVol').textContent = '--';
-  document.getElementById('resConf').textContent = '--';
-  document.getElementById('confFill').style.width = '0%';
-  document.getElementById('confPct').textContent = '0%';
-  document.getElementById('dupBanner').classList.remove('show');
-  document.getElementById('fileInput').value = '';
-  updateRulerStatus();
-}
-
-// Init
-setMode('leaf');
 </script>
 </body>
 </html>
